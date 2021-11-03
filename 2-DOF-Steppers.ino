@@ -5,18 +5,19 @@
 */
 #include <AccelStepper.h>
 #include <MultiStepper.h>
-#define STEPPER_LENGTH_DIR_PIN 4
-#define STEPPER_LENGTH_STEP_PIN 5
+#define STEPPER_LENGTH_DIR_PIN 2
+#define STEPPER_LENGTH_STEP_PIN 3
 #define STEPPER_LENGTH_MOTOR_INTERFACE 1
 #define STEPPER_LENGTH_MAX_SPEED 5000
 #define STEPPER_LENGTH_MAX_ACCEL 1400
 #define STEPPER_LENGTH_CONSTANT_SPEED 1000
 #define STEPPER_LENGTH_MIN_POS 0
 #define STEPPER_LENGTH_MAX_POS 4200
+#define STEPPER_MICROSTEP 4 // could add this to step to distance conversion
 
 
-#define STEPPER_WIDTH_DIR_PIN 6
-#define STEPPER_WIDTH_STEP_PIN 7
+#define STEPPER_WIDTH_DIR_PIN 4
+#define STEPPER_WIDTH_STEP_PIN 5
 #define STEPPER_WIDTH_MOTOR_INTERFACE 1
 #define STEPPER_WIDTH_MAX_SPEED 5000
 #define STEPPER_WIDTH_MAX_ACCEL 1400
@@ -28,20 +29,24 @@ AccelStepper stepper_length = AccelStepper(STEPPER_LENGTH_MOTOR_INTERFACE, STEPP
 AccelStepper stepper_width = AccelStepper(STEPPER_WIDTH_MOTOR_INTERFACE, STEPPER_WIDTH_STEP_PIN, STEPPER_WIDTH_DIR_PIN);
 MultiStepper steppers;
 
-#define LED_BIT_0 10
-#define LED_BIT_1 11
-#define LED_BIT_2 12
-#define LED_BIT_3 9
+#define LED_BIT_0 A3//10
+#define LED_BIT_1 A0//11
+#define LED_BIT_2 A2//12
+#define LED_BIT_3 A1//9
 byte ledPins[] = {LED_BIT_0, LED_BIT_1, LED_BIT_2, LED_BIT_3};
 
-#define echoPin_length 2 // attach pin D2 Arduino to pin Echo of HC-SR04
-#define trigPin_length 3 //attach pin D3 Arduino to pin Trig of HC-SR04
-
-
+#define echoPin_length 6 // 
+#define trigPin_length 7 //
+#define echoPin_width 8 // 
+#define trigPin_width 9
+byte echoPins[] = {6, 8};
+byte trigPins[] = {7, 9};
 
 
 //0 -> 15 byte input, blinks the leds according to each bit in byte argument
 void TaskSchedulerLED(byte);
+void StepperSetup();
+void SensorSetup();
 void LedSetup();
 
 long pos[2];
@@ -51,6 +56,9 @@ void setup() {
 
   Serial.begin(115200);
   LedSetup();
+
+  StepperSetup();
+  SensorSetup();
   TaskSchedulerLED(0);
   InitializeStepperPosition();
   TaskSchedulerLED(0);
@@ -74,11 +82,93 @@ void loop() {
 }
 void LedSetup() {
 
-  pinMode(9, OUTPUT);
-  pinMode(10, OUTPUT);
-  pinMode(11, OUTPUT);
-  pinMode(12, OUTPUT);
+  pinMode(LED_BIT_0, OUTPUT);
+  pinMode(LED_BIT_1, OUTPUT);
+  pinMode(LED_BIT_2, OUTPUT);
+  pinMode(LED_BIT_3, OUTPUT);
 
+
+}
+void StepperSetup() {
+
+  stepper_length.setMaxSpeed(STEPPER_LENGTH_CONSTANT_SPEED);
+  stepper_length.setAcceleration(STEPPER_LENGTH_MAX_ACCEL);
+  stepper_width.setMaxSpeed(STEPPER_WIDTH_CONSTANT_SPEED);
+}
+void SensorSetup() {
+
+  //Ultrasound sensors
+  for (byte i = 0; i < 2 ; ++i) {
+    pinMode(trigPins[i], OUTPUT); // Sets the trigPin as an OUTPUT
+    pinMode(echoPins[i], INPUT); // Sets the echoPin as an INPUT
+  }
+
+
+}
+void InitializeStepperPosition() {
+
+  long duration; // variable for the duration of sound wave travel
+  long distance[2] = {0, 0}; // variable for the distance measurement
+  int distanceGoal = 5; //cm
+  int iteration = 1;
+  byte readingNb = 10;
+  do {
+
+    TaskSchedulerLED(iteration++);
+    Serial.print("distance length in steps: ");
+    Serial.println(distance[0] * 1000 * 0.45);
+    Serial.print("distance width in steps: ");
+    Serial.println(distance[1] * 1000 * 0.45);
+
+    stepper_width.moveTo(stepper_width.currentPosition() - distance[0] * 1000 * 0.45);
+    stepper_length.moveTo(stepper_length.currentPosition() - distance[1] * 1000 * 0.45);
+
+    while (stepper_length.distanceToGo() || stepper_width.distanceToGo()) {
+      stepper_length.run();
+      stepper_width.run();
+    }
+    /*
+       Looks like 1mm = 100 steps at 1/4 microstepping.
+    */
+
+    for (byte i = 0 ; i < 2; ++i) {
+      for (byte j = 0; j < readingNb; ++j) {
+        digitalWrite(trigPins[i], LOW);
+        delayMicroseconds(2);
+        // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
+        digitalWrite(trigPins[i], HIGH);
+        delayMicroseconds(10);
+        digitalWrite(trigPins[i], LOW);
+        // Reads the echoPin, returns the sound wave travel time in microseconds
+        duration = pulseIn(echoPins[i], HIGH);
+        // Calculating the distance, troncation is ok?
+        distance[i] += duration * 0.034 * 0.5; // Speed of sound wave divided by 2 (go and back)
+
+        delay(5);
+      }
+      //take the average
+      distance[i] /= readingNb;
+      //if too far, reduce step to account for sensor inaccuracy
+      if (distance[i] > 15)
+        distance[i] = 15;
+
+      //check if one or both distanceGoal is reached
+      for (byte i = 0 ; i < 2; ++i)
+        distance[i] =  distance[i] < distanceGoal ? 0 : distance[i];
+      Serial.print("distance length in cm: ");
+      Serial.println(distance[0]);
+      Serial.print("distance width in cm: ");
+      Serial.println(distance[1]);
+    }
+
+  } while (distance[0] > distanceGoal || distance[1] > distanceGoal);
+
+  stepper_length.setCurrentPosition(0);
+  stepper_width.setCurrentPosition(0);
+
+
+  steppers.addStepper(stepper_length);
+  steppers.addStepper(stepper_width);
 
 }
 void TaskSchedulerLED(byte task) {
@@ -108,55 +198,4 @@ void TaskSchedulerLED(byte task) {
   }
   for (byte i = 0; i < 4 ; ++i)
     digitalWrite(ledPins[i], bitRead(task, i));
-}
-void InitializeStepperPosition() {
-
-  long duration; // variable for the duration of sound wave travel
-  long distance = 0, prev_distance = 9999; // variable for the distance measurement
-  pinMode(trigPin_length, OUTPUT); // Sets the trigPin as an OUTPUT
-  pinMode(echoPin_length, INPUT); // Sets the echoPin as an INPUT
-
-
-  stepper_length.setMaxSpeed(STEPPER_LENGTH_CONSTANT_SPEED);
-  stepper_length.setAcceleration(STEPPER_LENGTH_MAX_ACCEL);
-  stepper_width.setMaxSpeed(STEPPER_WIDTH_CONSTANT_SPEED);
-
-  int iteration = 1;
-  do {
-
-    TaskSchedulerLED(iteration++);
-
-    stepper_length.moveTo(stepper_length.currentPosition()-10);
-    
-    while (stepper_length.distanceToGo()) {
-      stepper_length.runSpeed();
-    }
-
-    for (int i = 0 ; i < 10; ++i) {
-      digitalWrite(trigPin_length, LOW);
-      delayMicroseconds(2);
-      // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
-      digitalWrite(trigPin_length, HIGH);
-      delayMicroseconds(10);
-      digitalWrite(trigPin_length, LOW);
-      // Reads the echoPin, returns the sound wave travel time in microseconds
-      duration = pulseIn(echoPin_length, HIGH);
-      // Calculating the distance, troncation is ok?
-      distance += duration * 0.034 * 0.5; // Speed of sound wave divided by 2 (go and back)
-
-      delay(5);
-    }
-    distance /= 10;
- 
-  }while (distance > 5);
-
-//  stepper_length.setCurrentPosition(0);
-//  stepper_length.setSpeed(STEPPER_LENGTH_CONSTANT_SPEED);
-
-
-
-
-  steppers.addStepper(stepper_length);
-  steppers.addStepper(stepper_width);
-
 }
