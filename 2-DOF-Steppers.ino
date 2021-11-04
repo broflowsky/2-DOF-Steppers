@@ -10,9 +10,9 @@
 #define STEPPER_LENGTH_MOTOR_INTERFACE 1
 #define STEPPER_LENGTH_MAX_SPEED 5000
 #define STEPPER_LENGTH_MAX_ACCEL 1400
-#define STEPPER_LENGTH_CONSTANT_SPEED 1000
+#define STEPPER_LENGTH_CONSTANT_SPEED 1800
 #define STEPPER_LENGTH_MIN_POS 0
-#define STEPPER_LENGTH_MAX_POS 4200
+#define STEPPER_LENGTH_MAX_POS 25000
 #define STEPPER_MICROSTEP 4 // could add this to step to distance conversion
 
 
@@ -21,10 +21,12 @@
 #define STEPPER_WIDTH_MOTOR_INTERFACE 1
 #define STEPPER_WIDTH_MAX_SPEED 5000
 #define STEPPER_WIDTH_MAX_ACCEL 1400
-#define STEPPER_WIDTH_CONSTANT_SPEED 1000
+#define STEPPER_WIDTH_CONSTANT_SPEED 1500
 #define STEPPER_WIDTH_MIN_POS 0
-#define STEPPER_WIDTH_MAX_POS 4200
+#define STEPPER_WIDTH_MAX_POS -25000
 
+//static allocation, multistepper takes a reference to an accelstepper
+//then the objects remain the same
 AccelStepper stepper_length = AccelStepper(STEPPER_LENGTH_MOTOR_INTERFACE, STEPPER_LENGTH_STEP_PIN, STEPPER_LENGTH_DIR_PIN);
 AccelStepper stepper_width = AccelStepper(STEPPER_WIDTH_MOTOR_INTERFACE, STEPPER_WIDTH_STEP_PIN, STEPPER_WIDTH_DIR_PIN);
 MultiStepper steppers;
@@ -39,8 +41,9 @@ byte ledPins[] = {LED_BIT_0, LED_BIT_1, LED_BIT_2, LED_BIT_3};
 #define trigPin_length 7 //
 #define echoPin_width 8 // 
 #define trigPin_width 9
-byte echoPins[] = {6, 8};
-byte trigPins[] = {7, 9};
+#define INIT_DIS 4
+byte echoPins[] = {8, 6};
+byte trigPins[] = {9, 7};
 
 
 //0 -> 15 byte input, blinks the leds according to each bit in byte argument
@@ -48,8 +51,8 @@ void TaskSchedulerLED(byte);
 void StepperSetup();
 void SensorSetup();
 void LedSetup();
-
-long pos[2];
+void  InitializeStepperPosition(byte);
+long stepperPos[2];//width first, length second
 
 void setup() {
   // put your setup code here, to run once:
@@ -60,7 +63,7 @@ void setup() {
   StepperSetup();
   SensorSetup();
   TaskSchedulerLED(0);
-  InitializeStepperPosition();
+  InitializeStepperPosition(INIT_DIS);
   TaskSchedulerLED(0);
 
 
@@ -68,17 +71,27 @@ void setup() {
 
 void loop() {
 
-  pos[0] = random(STEPPER_LENGTH_MIN_POS, STEPPER_LENGTH_MAX_POS);
-  pos[1] = random(STEPPER_WIDTH_MIN_POS, STEPPER_WIDTH_MAX_POS);
+  //  stepperPos[0] = random(STEPPER_LENGTH_MIN_POS, STEPPER_LENGTH_MAX_POS);
+  //  stepperPos[1] = random(STEPPER_WIDTH_MIN_POS, STEPPER_WIDTH_MAX_POS);
+  stepperPos[0] = STEPPER_WIDTH_MAX_POS;
+  stepperPos[1] = STEPPER_LENGTH_MAX_POS;
 
-  steppers.moveTo(pos);
-  Serial.println(pos[0]);
-  Serial.println(pos[1]);
+  steppers.moveTo(stepperPos);
+  Serial.print("Width stepper destination: ");
+  Serial.println(stepperPos[0]);
 
+  Serial.print("Length stepper destination: ");
+  Serial.println(stepperPos[1]);
 
-  steppers.runSpeedToPosition();
+  steppers.runSpeedToPosition();//BLOCKING
   TaskSchedulerLED(0);
 
+
+  stepperPos[0] = STEPPER_WIDTH_MIN_POS;
+  stepperPos[1] = STEPPER_LENGTH_MIN_POS;
+  steppers.moveTo(stepperPos);
+  steppers.runSpeedToPosition();//BLOCKING
+  TaskSchedulerLED(0);
 }
 void LedSetup() {
 
@@ -93,7 +106,14 @@ void StepperSetup() {
 
   stepper_length.setMaxSpeed(STEPPER_LENGTH_CONSTANT_SPEED);
   stepper_length.setAcceleration(STEPPER_LENGTH_MAX_ACCEL);
+
   stepper_width.setMaxSpeed(STEPPER_WIDTH_CONSTANT_SPEED);
+  stepper_width.setAcceleration(STEPPER_WIDTH_MAX_ACCEL);
+
+  //C++
+  steppers.addStepper(stepper_width);
+  steppers.addStepper(stepper_length);
+
 }
 void SensorSetup() {
 
@@ -105,22 +125,24 @@ void SensorSetup() {
 
 
 }
-void InitializeStepperPosition() {
+void InitializeStepperPosition(byte distanceGoal) {
 
   long duration; // variable for the duration of sound wave travel
   long distance[2] = {0, 0}; // variable for the distance measurement
-  int distanceGoal = 5; //cm
+  //int distanceGoal = 6; //cm
   int iteration = 1;
-  byte readingNb = 10;
-  do {
+  byte readingNb = 5;
 
-    TaskSchedulerLED(iteration++);
-    Serial.print("distance length in steps: ");
-    Serial.println(distance[0] * 1000 * 0.45);
+  do {//while(distance> goal)
+
+    TaskSchedulerLED(iteration++);//
     Serial.print("distance width in steps: ");
+    Serial.println(distance[0] * 1000 * 0.45);
+    Serial.print("distance length in steps: ");
     Serial.println(distance[1] * 1000 * 0.45);
-
-    stepper_width.moveTo(stepper_width.currentPosition() - distance[0] * 1000 * 0.45);
+    int temp = (stepper_width.currentPosition() + distance[0] * 1000 * 0.45);
+    Serial.println(temp);
+    stepper_width.moveTo(temp);
     stepper_length.moveTo(stepper_length.currentPosition() - distance[1] * 1000 * 0.45);
 
     while (stepper_length.distanceToGo() || stepper_width.distanceToGo()) {
@@ -153,12 +175,12 @@ void InitializeStepperPosition() {
         distance[i] = 15;
 
       //check if one or both distanceGoal is reached
-      for (byte i = 0 ; i < 2; ++i)
-        distance[i] =  distance[i] < distanceGoal ? 0 : distance[i];
-      Serial.print("distance length in cm: ");
-      Serial.println(distance[0]);
-      Serial.print("distance width in cm: ");
-      Serial.println(distance[1]);
+            for (byte i = 0 ; i < 2; ++i)
+              distance[i] =  distance[i] < distanceGoal ? 0 : distance[i];
+      //      Serial.print("distance width in cm: ");
+      //      Serial.println(distance[0]);
+      //      Serial.print("distance length in cm: ");
+      //      Serial.println(distance[1]);
     }
 
   } while (distance[0] > distanceGoal || distance[1] > distanceGoal);
@@ -167,8 +189,6 @@ void InitializeStepperPosition() {
   stepper_width.setCurrentPosition(0);
 
 
-  steppers.addStepper(stepper_length);
-  steppers.addStepper(stepper_width);
 
 }
 void TaskSchedulerLED(byte task) {
