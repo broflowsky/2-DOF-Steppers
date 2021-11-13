@@ -8,22 +8,23 @@
 #define STEPPER_LENGTH_DIR_PIN 2
 #define STEPPER_LENGTH_STEP_PIN 3
 #define STEPPER_LENGTH_MOTOR_INTERFACE 1
-#define STEPPER_LENGTH_MAX_SPEED 5000
-#define STEPPER_LENGTH_MAX_ACCEL 1400
-#define STEPPER_LENGTH_CONSTANT_SPEED 5000
+
+#define STEPPER_LENGTH_MAX_ACCEL 3500
+#define STEPPER_LENGTH_CONSTANT_SPEED 4500
 #define STEPPER_LENGTH_MIN_POS 0
-#define STEPPER_LENGTH_MAX_POS 28000
+#define STEPPER_LENGTH_MAX_POS 32500
 #define STEPPER_MICROSTEP 4 // could add this to step to distance conversion
 
 
 #define STEPPER_WIDTH_DIR_PIN 4
 #define STEPPER_WIDTH_STEP_PIN 5
 #define STEPPER_WIDTH_MOTOR_INTERFACE 1
-#define STEPPER_WIDTH_MAX_SPEED 5000
-#define STEPPER_WIDTH_MAX_ACCEL 1400
-#define STEPPER_WIDTH_CONSTANT_SPEED 5000
+
+#define STEPPER_WIDTH_MAX_ACCEL 3500
+#define STEPPER_WIDTH_CONSTANT_SPEED 4500
 #define STEPPER_WIDTH_MIN_POS 0
-#define STEPPER_WIDTH_MAX_POS -28000
+#define STEPPER_WIDTH_MAX_POS -32500
+
 
 //static allocation, multistepper takes a reference to an accelstepper
 //then the objects remain the same
@@ -41,7 +42,8 @@ byte ledPins[] = {LED_BIT_0, LED_BIT_1, LED_BIT_2, LED_BIT_3};
 #define trigPin_length 7 //
 #define echoPin_width 8 // 
 #define trigPin_width 9
-#define INIT_DIS 4
+#define INIT_DIS 5
+#define RANGE_FINDER_MAX_DISTANCE 80
 byte echoPins[] = {8, 6};
 byte trigPins[] = {9, 7};
 
@@ -66,11 +68,9 @@ void setup() {
   InitializeStepperPosition(INIT_DIS);
   TaskSchedulerLED(0);
 
-
 }
 
 void loop() {
-
   //  stepperPos[0] = random(STEPPER_LENGTH_MIN_POS, STEPPER_LENGTH_MAX_POS);
   //  stepperPos[1] = random(STEPPER_WIDTH_MIN_POS, STEPPER_WIDTH_MAX_POS);
   stepperPos[0] = STEPPER_WIDTH_MAX_POS;
@@ -110,7 +110,6 @@ void StepperSetup() {
   stepper_width.setMaxSpeed(STEPPER_WIDTH_CONSTANT_SPEED);
   stepper_width.setAcceleration(STEPPER_WIDTH_MAX_ACCEL);
 
-  //C++
   steppers.addStepper(stepper_width);
   steppers.addStepper(stepper_length);
 
@@ -129,7 +128,6 @@ void InitializeStepperPosition(byte distanceGoal) {
 
   long duration; // variable for the duration of sound wave travel
   long distance[2] = {0, 0}; // variable for the distance measurement
-  //int distanceGoal = 6; //cm
   int iteration = 1;
   byte readingNb = 5;
 
@@ -140,9 +138,7 @@ void InitializeStepperPosition(byte distanceGoal) {
     Serial.println(distance[0] * 1000 * 0.45);
     Serial.print("distance length in steps: ");
     Serial.println(distance[1] * 1000 * 0.45);
-    int temp = (stepper_width.currentPosition() + distance[0] * 1000 * 0.45);
-    Serial.println(temp);
-    stepper_width.moveTo(temp);
+    stepper_width.moveTo(stepper_width.currentPosition() + distance[0] * 1000 * 0.45);
     stepper_length.moveTo(stepper_length.currentPosition() - distance[1] * 1000 * 0.45);
 
     while (stepper_length.distanceToGo() || stepper_width.distanceToGo()) {
@@ -153,8 +149,8 @@ void InitializeStepperPosition(byte distanceGoal) {
        Looks like 1mm = 100 steps at 1/4 microstepping.
     */
 
-    for (byte i = 0 ; i < 2; ++i) {
-      for (byte j = 0; j < readingNb; ++j) {
+    for (byte i = 0 ; i < 2; ++i) {//for each range finder
+      for (byte j = 0; j < readingNb; ++j) {// for each reading
         digitalWrite(trigPins[i], LOW);
         delayMicroseconds(2);
         // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
@@ -171,8 +167,8 @@ void InitializeStepperPosition(byte distanceGoal) {
       //take the average
       distance[i] /= readingNb;
       //if too far, reduce step to account for sensor inaccuracy
-      if (distance[i] > 15)
-        distance[i] = 15;
+      if (distance[i] > RANGE_FINDER_MAX_DISTANCE)
+        distance[i] = RANGE_FINDER_MAX_DISTANCE;
 
       //check if one or both distanceGoal is reached
             for (byte i = 0 ; i < 2; ++i)
